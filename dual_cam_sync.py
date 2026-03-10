@@ -67,7 +67,7 @@ def capture_camera(cam_id, writer):
     filepath = os.path.join(OUTDIR, filename)
 
     cmd = [
-        "libcamera-still",
+        "rpicam-still",
         "--camera", str(cam_id),
         "--width", str(WIDTH),
         "--height", str(HEIGHT),

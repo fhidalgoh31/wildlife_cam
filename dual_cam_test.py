@@ -66,7 +66,7 @@ def baseline_capture(cam_id, writer):
     path = os.path.join(OUTDIR, name + ".jpg")
 
     cmd = [
-        "libcamera-still",
+        "rpicam-still",
         "--camera", str(cam_id),
         "--width", str(WIDTH),
         "--height", str(HEIGHT),
@@ -108,7 +108,7 @@ def sweep_capture(cam_id, base_shutter, gain, factor, writer):
     path = os.path.join(OUTDIR, name + ".jpg")
 
     cmd = [
-        "libcamera-still",
+        "rpicam-still",
         "--camera", str(cam_id),
         "--width", str(WIDTH),
         "--height", str(HEIGHT),
@@ -149,7 +149,7 @@ def burst_video(cam_id, shutter, gain, writer):
     pattern =  os.path.join(OUTDIR,f"03-frame_cam{cam_id}_%04d.jpg")
 
     cmd = [
-        "libcamera-vid",
+        "rpicam-vid",
         "--camera", str(cam_id),
         "--codec", "mjpeg",
         "--width", str(VID_WIDTH),
