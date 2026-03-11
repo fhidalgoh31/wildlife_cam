@@ -92,12 +92,25 @@ def set_manual(cam, shutter, gain):
 
 
 def capture_pair(cam0, cam1):
+
     req0 = cam0.capture_request()
     req1 = cam1.capture_request()
-    ts0 = req0.get_metadata()["SensorTimestamp"]
-    ts1 = req1.get_metadata()["SensorTimestamp"]
+
+    meta0 = req0.get_metadata()
+    meta1 = req1.get_metadata()
+
+    ts0 = meta0["SensorTimestamp"]
+    ts1 = meta1["SensorTimestamp"]
+
+    exp0 = meta0["ExposureTime"]
+    exp1 = meta1["ExposureTime"]
+
+    gain0 = meta0["AnalogueGain"]
+    gain1 = meta1["AnalogueGain"]
+
     delta = abs(ts0 - ts1)
-    return req0, req1, ts0, ts1, delta
+
+    return req0, req1, ts0, ts1, exp0, exp1, gain0, gain1, delta
 
 
 def closest_pair_to_ts(cam0, cam1, target_ts):
@@ -107,7 +120,7 @@ def closest_pair_to_ts(cam0, cam1, target_ts):
 
     for _ in range(6):
 
-        req0, req1, ts0, ts1, delta = capture_pair(cam0, cam1)
+        req0, req1, ts0, ts1, exp0, exp1, gain0, gain1, delta = capture_pair(cam0, cam1)
 
         mid = (ts0 + ts1) // 2
         diff = abs(mid - target_ts)
@@ -118,7 +131,7 @@ def closest_pair_to_ts(cam0, cam1, target_ts):
                 best[0].release()
                 best[1].release()
 
-            best = (req0, req1, ts0, ts1)
+            best = (req0, req1)
             best_delta = diff
 
         else:
@@ -247,7 +260,7 @@ def main():
 
             attempts += 1
 
-            req0, req1, ts0, ts1, delta = capture_pair(cam0, cam1)
+            req0, req1, ts0, ts1, exp0, exp1, gain0, gain1, delta = capture_pair(cam0, cam1)
 
             if delta < SYNC_THRESHOLD_NS:
 
@@ -262,11 +275,11 @@ def main():
 
                 append_metadata([prefix,RES_LABEL,"sweep",
                                  factor,saved,0,ts0,delta,
-                                 shutter,gain,fname0])
+                                 exp0,gain0,fname0])
 
                 append_metadata([prefix,RES_LABEL,"sweep",
                                  factor,saved,1,ts1,delta,
-                                 shutter,gain,fname1])
+                                 exp1,gain1,fname1])
 
                 if saved == 0:
                     update_symlink(os.path.join(DATA_DIR, fname0))
@@ -308,11 +321,23 @@ def main():
             ret_ard, ard_frame = usb_arducam.read()
             ard_ts = time.monotonic_ns()
 
-        req0, req1, ts0, ts1 = closest_pair_to_ts(
+        req0, req1 = closest_pair_to_ts(
             cam0,
             cam1,
             thermal_ts
         )
+
+        meta0 = req0.get_metadata()
+        meta1 = req1.get_metadata()
+
+        ts0 = meta0["SensorTimestamp"]
+        ts1 = meta1["SensorTimestamp"]
+
+        exp0 = meta0["ExposureTime"]
+        exp1 = meta1["ExposureTime"]
+
+        gain0 = meta0["AnalogueGain"]
+        gain1 = meta1["AnalogueGain"]
 
         fname0 = f"{prefix}_{RES_LABEL}_quad_p{saved}_cam0.jpg"
         fname1 = fname0.replace("cam0","cam1")
@@ -329,14 +354,14 @@ def main():
             prefix,RES_LABEL,"quad",
             TRIPLE_FACTOR,saved,0,
             ts0,abs(ts0-thermal_ts),
-            shutter,gain,fname0
+            exp0,gain0,fname0
         ])
 
         append_metadata([
             prefix,RES_LABEL,"quad",
             TRIPLE_FACTOR,saved,1,
             ts1,abs(ts1-thermal_ts),
-            shutter,gain,fname1
+            exp1,gain1,fname1
         ])
 
         if arducam_available and ret_ard:
@@ -350,18 +375,15 @@ def main():
                 prefix,RES_LABEL,"quad",
                 TRIPLE_FACTOR,saved,"arducam",
                 ard_ts,abs(ard_ts-thermal_ts),
-                shutter,gain,fname_ard
+                0,0,fname_ard
             ])
 
-        # convert thermal frame to true 16-bit array
         thermal = thermal_frame.astype(np.uint16)
 
-        ##DEBUG
         print("thermal range:",
             thermal_frame.min(),
             thermal_frame.max())
-            
-        # save as 16-bit PNG
+
         cv2.imwrite(
             os.path.join(DATA_DIR, fname_th),
             thermal
@@ -371,7 +393,7 @@ def main():
             prefix,RES_LABEL,"quad",
             TRIPLE_FACTOR,saved,"thermal",
             thermal_ts,0,
-            shutter,gain,fname_th
+            0,0,fname_th
         ])
 
         req0.release()
