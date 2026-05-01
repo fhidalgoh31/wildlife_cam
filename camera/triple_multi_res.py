@@ -9,10 +9,10 @@ SINGLE_SCRIPT = os.path.join(BASE_DIR, "triple_single_res.py")
 
 # (width, height, tolerance_ms)
 RESOLUTIONS = [
-    (1280, 720, 10),
-    (1536, 864, 25),
-    (2304, 1296, 45),
-    (4608, 2592, 85)
+    # (1280, 720, 10),
+    # (1536, 864, 25),
+    # (2304, 1296, 45),
+    (4608, 2592, 85),
 ]
 
 for w, h, tol in RESOLUTIONS:

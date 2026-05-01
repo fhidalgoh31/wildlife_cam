@@ -40,10 +40,24 @@ print(f"Using sync tolerance: {SYNC_TOL_MS} ms")
 
 # ================= CONFIG =================
 
-BURST_SIZE = 5
-SWEEP_FACTORS = [1.0, 0.8, 0.3, 1.5]
-TRIPLE_FACTOR = 0.8
-MAX_ATTEMPTS = 200
+BURST_SIZE = 1  # How many pictures per exposure
+MAX_ATTEMPTS = 200   # max frames to sync
+
+# Fixed exposure times in microseconds (12 values)
+EXPOSURE_TIMES_US = [
+    333,
+    500,
+    1000,
+    2000,
+    3000,
+    4000,
+    6000,
+    8000,
+    10000,
+    12000,
+    16000,
+    18000
+]
 
 DATA_DIR = os.path.join(os.getcwd(), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -70,16 +84,14 @@ def setup_csi(cam_id):
     )
     cam.configure(config)
     cam.start()
+
+    # Force disable AE and AWB globally
+    cam.set_controls({
+        "AeEnable": False,
+        "AwbEnable": False
+    })
+
     return cam
-
-
-def get_baseline(cam):
-    cam.set_controls({"AeEnable": True})
-    time.sleep(1.0)
-    req = cam.capture_request()
-    meta = req.get_metadata()
-    req.release()
-    return meta["ExposureTime"], meta["AnalogueGain"]
 
 
 def set_manual(cam, shutter, gain):
@@ -118,7 +130,7 @@ def closest_pair_to_ts(cam0, cam1, target_ts):
     best = None
     best_delta = 1e18
 
-    for _ in range(6):
+    for _ in range(3):  # 6 frames each to find the best match 
 
         req0, req1, ts0, ts1, exp0, exp1, gain0, gain1, delta = capture_pair(cam0, cam1)
 
@@ -147,7 +159,7 @@ def append_metadata(row):
         writer = csv.writer(f)
         if not file_exists:
             writer.writerow([
-                "test","resolution","mode","factor","pair",
+                "test","resolution","mode","exposure_us","pair",
                 "camera","timestamp","delta_ns",
                 "exposure","gain","filename"
             ])
@@ -180,6 +192,10 @@ def find_usb_camera(name):
 
                         if ret:
                             print(f"{name} found at {dev}")
+
+                            # Try to disable auto white balance (may not work on all devices)
+                            cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+
                             return cap
 
                         cap.release()
@@ -206,52 +222,34 @@ def main():
     # ---------- USB ----------
     print("Opening USB cameras...")
 
-    usb_thermal = find_usb_camera("Pure")
     usb_arducam = find_usb_camera("Arducam")
-
-    thermal_available = usb_thermal is not None
     arducam_available = usb_arducam is not None
 
-    if thermal_available:
-        usb_thermal.set(cv2.CAP_PROP_CONVERT_RGB, 0)
-        usb_thermal.set(cv2.CAP_PROP_FRAME_WIDTH,160)
-        usb_thermal.set(cv2.CAP_PROP_FRAME_HEIGHT,120)
+    if not arducam_available:
+        print("❌ Arducam not found, exiting.")
+        return
 
-        usb_thermal.set(
-            cv2.CAP_PROP_FOURCC,
-            cv2.VideoWriter_fourcc('Y','1','6',' ')
-        )
+    print("Arducam is ready")
+    usb_arducam.set(cv2.CAP_PROP_BUFFERSIZE,1)
 
-    if arducam_available:
-        usb_arducam.set(cv2.CAP_PROP_BUFFERSIZE,1)
-
-    print("Thermal:", thermal_available)
-    print("Arducam:", arducam_available)
 
     time.sleep(1.0)
 
-    # ---------- Baseline ----------
-    base_exp0, base_gain0 = get_baseline(cam0)
-    base_exp1, base_gain1 = get_baseline(cam1)
+    # Fixed gain (can be tuned)
+    gain = 1.0
 
-    base_exp = min(base_exp0, base_exp1)
-    base_gain = min(base_gain0, base_gain1)
+    # ================= TRIPLE SYNC TEST =================
 
-    print("Baseline exposure:", base_exp)
-    print("Baseline gain:", base_gain)
+    print("\nTriple sync test (2x CSI + Arducam)")
 
-    # ================= SWEEP CSI =================
+    for exp_time in EXPOSURE_TIMES_US:
 
-    for factor in SWEEP_FACTORS:
+        print(f"\nExposure {exp_time} us")
 
-        print(f"\nSweep factor {factor}")
+        set_manual(cam0, exp_time, gain)
+        set_manual(cam1, exp_time, gain)
 
-        shutter = base_exp * factor
-        gain = base_gain
-
-        set_manual(cam0, shutter, gain)
-        set_manual(cam1, shutter, gain)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         saved = 0
         attempts = 0
@@ -260,111 +258,39 @@ def main():
 
             attempts += 1
 
-            req0, req1, ts0, ts1, exp0, exp1, gain0, gain1, delta = capture_pair(cam0, cam1)
-
-            if delta < SYNC_THRESHOLD_NS:
-
-                fname0 = f"{prefix}_{RES_LABEL}_sweep_f{factor}_p{saved}_cam0.jpg"
-                fname1 = fname0.replace("cam0","cam1")
-
-                img0 = req0.make_image("main")
-                img1 = req1.make_image("main")
-
-                img0.save(os.path.join(DATA_DIR, fname0))
-                img1.save(os.path.join(DATA_DIR, fname1))
-
-                append_metadata([prefix,RES_LABEL,"sweep",
-                                 factor,saved,0,ts0,delta,
-                                 exp0,gain0,fname0])
-
-                append_metadata([prefix,RES_LABEL,"sweep",
-                                 factor,saved,1,ts1,delta,
-                                 exp1,gain1,fname1])
-
-                if saved == 0:
-                    update_symlink(os.path.join(DATA_DIR, fname0))
-
-                saved += 1
-
-            req0.release()
-            req1.release()
-
-    # ================= QUAD TEST =================
-
-    print("\nQuad test using thermal reference")
-
-    shutter = base_exp * TRIPLE_FACTOR
-    gain = base_gain
-
-    set_manual(cam0, shutter, gain)
-    set_manual(cam1, shutter, gain)
-
-    saved = 0
-    attempts = 0
-
-    while saved < BURST_SIZE and attempts < MAX_ATTEMPTS:
-
-        attempts += 1
-
-        ret_th, thermal_frame = usb_thermal.read()
-        thermal_ts = time.monotonic_ns()
-
-        if not ret_th:
-            continue
-
-        ret_ard = False
-        ard_frame = None
-        ard_ts = None
-
-        if arducam_available:
-
+            # Arducam acts as reference clock
             ret_ard, ard_frame = usb_arducam.read()
             ard_ts = time.monotonic_ns()
 
-        req0, req1 = closest_pair_to_ts(
-            cam0,
-            cam1,
-            thermal_ts
-        )
+            if not ret_ard:
+                continue
 
-        meta0 = req0.get_metadata()
-        meta1 = req1.get_metadata()
+            reqs = closest_pair_to_ts(cam0, cam1, ard_ts)
+            if reqs is None:
+                continue
+            req0, req1 = reqs
 
-        ts0 = meta0["SensorTimestamp"]
-        ts1 = meta1["SensorTimestamp"]
+            meta0 = req0.get_metadata()
+            meta1 = req1.get_metadata()
 
-        exp0 = meta0["ExposureTime"]
-        exp1 = meta1["ExposureTime"]
+            ts0 = meta0["SensorTimestamp"]
+            ts1 = meta1["SensorTimestamp"]
 
-        gain0 = meta0["AnalogueGain"]
-        gain1 = meta1["AnalogueGain"]
+            exp0 = meta0["ExposureTime"]
+            exp1 = meta1["ExposureTime"]
 
-        fname0 = f"{prefix}_{RES_LABEL}_quad_p{saved}_cam0.jpg"
-        fname1 = fname0.replace("cam0","cam1")
-        fname_ard = fname0.replace("cam0","arducam")
-        fname_th = fname0.replace("cam0","thermal").replace(".jpg",".png")
+            gain0 = meta0["AnalogueGain"]
+            gain1 = meta1["AnalogueGain"]
 
-        img0 = req0.make_image("main")
-        img1 = req1.make_image("main")
+            fname0 = f"{prefix}_{RES_LABEL}_exp{exp_time}_p{saved}_cam0.jpg"
+            fname1 = fname0.replace("cam0","cam1")
+            fname_ard = fname0.replace("cam0","arducam")
 
-        img0.save(os.path.join(DATA_DIR, fname0))
-        img1.save(os.path.join(DATA_DIR, fname1))
+            img0 = req0.make_image("main")
+            img1 = req1.make_image("main")
 
-        append_metadata([
-            prefix,RES_LABEL,"quad",
-            TRIPLE_FACTOR,saved,0,
-            ts0,abs(ts0-thermal_ts),
-            exp0,gain0,fname0
-        ])
-
-        append_metadata([
-            prefix,RES_LABEL,"quad",
-            TRIPLE_FACTOR,saved,1,
-            ts1,abs(ts1-thermal_ts),
-            exp1,gain1,fname1
-        ])
-
-        if arducam_available and ret_ard:
+            img0.save(os.path.join(DATA_DIR, fname0))
+            img1.save(os.path.join(DATA_DIR, fname1))
 
             cv2.imwrite(
                 os.path.join(DATA_DIR, fname_ard),
@@ -372,34 +298,37 @@ def main():
             )
 
             append_metadata([
-                prefix,RES_LABEL,"quad",
-                TRIPLE_FACTOR,saved,"arducam",
-                ard_ts,abs(ard_ts-thermal_ts),
-                0,0,fname_ard
+                prefix,RES_LABEL,"triple",
+                exp_time,saved,"CSI_0",
+                ts0,0,
+                exp0,gain0,fname0
             ])
 
-        thermal = thermal_frame.astype(np.uint16)
+            append_metadata([
+                prefix,RES_LABEL,"triple",
+                exp_time,saved,"CSI_1",
+                ts1,abs(ts1-ts0),
+                exp1,gain1,fname1
+            ])
 
-        print("thermal range:",
-            thermal_frame.min(),
-            thermal_frame.max())
+            append_metadata([
+                prefix,RES_LABEL,"triple",
+                exp_time,saved,"arducam",
+                ard_ts,abs(ard_ts - ts0),
+                -1,-1,fname_ard
+            ])
 
-        cv2.imwrite(
-            os.path.join(DATA_DIR, fname_th),
-            thermal
-        )
+            delta_csi = abs(ts1 - ts0) / 1e6
+            delta_ard = abs(ard_ts - ts0) / 1e6
+            print(f"ΔCSI: {delta_csi:.2f} ms | ΔARD: {delta_ard:.2f} ms")
 
-        append_metadata([
-            prefix,RES_LABEL,"quad",
-            TRIPLE_FACTOR,saved,"thermal",
-            thermal_ts,0,
-            0,0,fname_th
-        ])
+            if saved == 0:
+                update_symlink(os.path.join(DATA_DIR, fname0))
 
-        req0.release()
-        req1.release()
+            req0.release()
+            req1.release()
 
-        saved += 1
+            saved += 1
 
     # ---------- Cleanup ----------
 
@@ -408,9 +337,6 @@ def main():
 
     cam0.close()
     cam1.close()
-
-    if thermal_available:
-        usb_thermal.release()
 
     if arducam_available:
         usb_arducam.release()
