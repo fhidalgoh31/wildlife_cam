@@ -248,6 +248,7 @@ def main():
 
         set_manual(cam0, exp_time, gain)
         set_manual(cam1, exp_time, gain)
+        usb_arducam.set(cv2.CAP_PROP_EXPOSURE, exp_time)  
 
         time.sleep(0.3)
 
