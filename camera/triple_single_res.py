@@ -232,6 +232,14 @@ def main():
     print("Arducam is ready")
     usb_arducam.set(cv2.CAP_PROP_BUFFERSIZE,1)
 
+    usb_arducam.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+    usb_arducam.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+
+    actual_w = usb_arducam.get(cv2.CAP_PROP_FRAME_WIDTH)
+    actual_h = usb_arducam.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
+    print(f"Arducam actual resolution: {actual_w}x{actual_h}")
+
 
     time.sleep(1.0)
 
