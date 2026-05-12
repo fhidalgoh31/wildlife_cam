@@ -232,13 +232,18 @@ def main():
     print("Arducam is ready")
     usb_arducam.set(cv2.CAP_PROP_BUFFERSIZE,1)
 
+    usb_arducam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     usb_arducam.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
     usb_arducam.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+    
 
     actual_w = usb_arducam.get(cv2.CAP_PROP_FRAME_WIDTH)
     actual_h = usb_arducam.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-    print(f"Arducam actual resolution: {actual_w}x{actual_h}")
+    fourcc = int(usb_arducam.get(cv2.CAP_PROP_FOURCC))
+    fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
+
+    print(f"Arducam actual resolution: {actual_w}x{actual_h}, FOURCC={fourcc_str}")
 
 
     time.sleep(1.0)
